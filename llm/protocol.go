@@ -157,20 +157,27 @@ func (s *LLMToolState) observe(call LLMToolCall) error {
 
 func (s *LLMToolState) execute(ctx context.Context, l *LLM) error {
 	for _, call := range s.Calls {
+		// a failed tool call is reported back to the llm instead of aborting the answer,
+		// so it can retry with another source or answer with what it already has
 		var property map[string]interface{}
 		if err := json.Unmarshal([]byte(call.Arguments), &property); err != nil {
 			logger.WarnCtx(l.Ctx, "tool arguments json unmarshal fail", "tool", call.Name, "args", call.Arguments, "err", err)
-			return ToolsJsonErr
+			s.Results = append(s.Results, LLMToolResult{ID: call.ID, Content: toolErrorContent(ToolsJsonErr)})
+			continue
 		}
 
 		content, err := l.ExecMcpReq(ctx, call.Name, property)
 		if err != nil {
 			logger.ErrorCtx(ctx, "execute tool fail", "toolId", call.ID, "tool", call.Name, "err", err)
-			return err
+			content = toolErrorContent(err)
 		}
 		s.Results = append(s.Results, LLMToolResult{ID: call.ID, Content: content})
 	}
 	return nil
+}
+
+func toolErrorContent(err error) string {
+	return "Tool call failed: " + err.Error() + ". Try another source or tool, or answer with the information you already have."
 }
 
 func (s *LLMToolState) observeComplete(ctx context.Context, l *LLM, calls []LLMToolCall) error {
