@@ -11,6 +11,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -1152,6 +1153,16 @@ func (t *TelegramRobot) sendTextStream(messageChan *MsgChan) {
 	msgId := utils.ParseInt(msgIdStr)
 	chatId := int64(utils.ParseInt(chatIdStr))
 
+	// private chats stream through native rich message drafts
+	if message := t.getMessage(); message != nil && message.Chat != nil && message.Chat.Type == "private" {
+		if err := t.sendRichDraft(chatId, msgId, "<tg-thinking>"+i18n.GetMessage("thinking", nil)+"</tg-thinking>"); err == nil {
+			t.sendTextStreamDraft(messageChan, chatId, msgId)
+			return
+		} else {
+			logger.WarnCtx(t.Robot.Ctx, "send rich draft fail, fallback to editing messages", "err", err)
+		}
+	}
+
 	// show a thinking placeholder and typing status until llm answers
 	thinkingMsgId, err := t.sendRichMarkdown(chatId, msgId, i18n.GetMessage("thinking", nil))
 	if err != nil {
@@ -1223,6 +1234,97 @@ func (t *TelegramRobot) sendTextStream(messageChan *MsgChan) {
 			}
 		}
 	}
+}
+
+// draftKeepAlive resend the draft before telegram drops it after 30 seconds
+const draftKeepAlive = 15 * time.Second
+
+// sendTextStreamDraft stream answers as rich message drafts, then persist each finished message
+func (t *TelegramRobot) sendTextStreamDraft(messageChan *MsgChan, chatId int64, msgId int) {
+	draftId := msgId
+	var (
+		mu        sync.Mutex
+		lastDraft = "<tg-thinking>" + i18n.GetMessage("thinking", nil) + "</tg-thinking>"
+		lastSend  = time.Now()
+	)
+
+	keepAliveDone := make(chan struct{})
+	defer close(keepAliveDone)
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-keepAliveDone:
+				return
+			case <-ticker.C:
+				mu.Lock()
+				if time.Since(lastSend) >= draftKeepAlive {
+					if err := t.sendRichDraft(chatId, draftId, lastDraft); err != nil {
+						logger.WarnCtx(t.Robot.Ctx, "keep draft alive fail", "err", err)
+					}
+					lastSend = time.Now()
+				}
+				mu.Unlock()
+			}
+		}
+	}()
+
+	var current *param.MsgInfo
+	finish := func(msg *param.MsgInfo) {
+		if msg == nil || msg.MsgId != "" {
+			return
+		}
+		sendMsgId, err := t.sendRichMarkdown(chatId, msgId, msg.Content)
+		if err != nil && t.sleepUtilNoLimit(msgId, err) {
+			sendMsgId, err = t.sendRichMarkdown(chatId, msgId, msg.Content)
+		}
+		if err != nil {
+			logger.WarnCtx(t.Robot.Ctx, "send rich message fail, fallback to plain text", "msgID", msgId, "err", err)
+			tgMsgInfo := tgbotapi.NewMessage(chatId, msg.Content)
+			tgMsgInfo.ReplyToMessageID = msgId
+			sendInfo, err := t.Bot.Send(tgMsgInfo)
+			if err != nil {
+				logger.WarnCtx(t.Robot.Ctx, "Error sending message:", "msgID", msgId, "err", err)
+				return
+			}
+			sendMsgId = sendInfo.MessageID
+		}
+		msg.MsgId = strconv.Itoa(sendMsgId)
+	}
+
+	for msg := range messageChan.NormalMessageChan {
+		if len(msg.Content) == 0 {
+			msg.Content = "get nothing from llm!"
+		}
+
+		// a new message starts once the previous one is full
+		if current != nil && msg != current {
+			finish(current)
+			draftId++
+		}
+		current = msg
+
+		mu.Lock()
+		lastDraft = msg.Content
+		lastSend = time.Now()
+		if err := t.sendRichDraft(chatId, draftId, msg.Content); err != nil {
+			logger.WarnCtx(t.Robot.Ctx, "send rich draft fail", "msgID", msgId, "err", err)
+		}
+		mu.Unlock()
+	}
+
+	finish(current)
+}
+
+// sendRichDraft stream a partial markdown answer to a private chat
+func (t *TelegramRobot) sendRichDraft(chatId int64, draftId int, content string) error {
+	params := tgbotapi.Params{}
+	params.AddNonZero64("chat_id", chatId)
+	params.AddNonZero("draft_id", draftId)
+	params.AddInterface("rich_message", map[string]string{"markdown": content})
+	_, err := t.Bot.MakeRequest("sendRichMessageDraft", params)
+	return err
 }
 
 // sendRichMarkdown send markdown content as telegram rich message, return the message id
