@@ -191,6 +191,27 @@ func (r *RobotInfo) AddUserInfo() bool {
 
 }
 
+// hasDocument report whether the message carries a file
+func (r *RobotInfo) hasDocument() bool {
+	if telegramRobot, ok := r.Robot.(*TelegramRobot); ok {
+		msg := telegramRobot.getMessage()
+		return msg != nil && msg.Document != nil
+	}
+	return false
+}
+
+// hasAttachment report whether the message carries an image, voice or file
+func (r *RobotInfo) hasAttachment() bool {
+	if len(r.Robot.getImage()) > 0 || r.hasDocument() {
+		return true
+	}
+	if telegramRobot, ok := r.Robot.(*TelegramRobot); ok {
+		msg := telegramRobot.getMessage()
+		return msg != nil && (msg.Voice != nil || msg.Audio != nil)
+	}
+	return false
+}
+
 // GetContextId return the id that conversation history is stored under.
 // Telegram group chats get their own context per user, private chats keep the user id.
 func (r *RobotInfo) GetContextId() string {
@@ -1702,7 +1723,8 @@ type SmartModeResult struct {
 }
 
 func (r *RobotInfo) smartMode() bool {
-	if r.Robot.getCommand() != "" || r.Robot.getPrompt() == "" || !conf.BaseConfInfo.SmartMode {
+	// questions about an attached text file are plain chat, skip routing the whole file through smart mode
+	if r.Robot.getCommand() != "" || r.Robot.getPrompt() == "" || !conf.BaseConfInfo.SmartMode || r.hasDocument() {
 		return true
 	}
 

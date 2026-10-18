@@ -1068,7 +1068,7 @@ func (t *TelegramRobot) GetDocumentText() string {
 	}
 
 	doc := t.Update.Message.Document
-	if doc.FileSize > 512*1024 || !isTextDocument(doc.MimeType, doc.FileName) {
+	if doc.FileSize > 128*1024 || !isTextDocument(doc.MimeType, doc.FileName) {
 		return ""
 	}
 

@@ -41,6 +41,12 @@ var (
 )
 
 func (r *RobotInfo) tryConversationConfig() bool {
+	// only admins can change config, and a message with an attachment is about that attachment
+	_, _, userId := r.GetChatIdAndMsgIdAndUserID()
+	if !r.isAdminUser(userId) || r.hasAttachment() {
+		return false
+	}
+
 	if r.Robot.getCommand() != "" || r.Robot.getPrompt() == "" ||
 		!configCandidateReg.MatchString(r.Robot.getPrompt()) {
 		return false
@@ -55,7 +61,6 @@ func (r *RobotInfo) tryConversationConfig() bool {
 		return false
 	}
 
-	_, _, userId := r.GetChatIdAndMsgIdAndUserID()
 	logger.InfoCtx(r.Ctx, "conversation config request", "userID", userId, "prompt", r.Robot.getPrompt())
 	r.handleConversationConfig()
 	return true
