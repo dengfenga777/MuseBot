@@ -131,6 +131,11 @@ func (d *OpenAIReq) Send(ctx context.Context, l *LLM) error {
 		if response.Usage != nil {
 			chunk.Usage = response.Usage.TotalTokens
 			chunk.HasUsage = true
+			chunk.PromptTokens = response.Usage.PromptTokens
+			chunk.CompletionTokens = response.Usage.CompletionTokens
+			if response.Usage.PromptTokensDetails != nil {
+				chunk.CachedTokens = response.Usage.PromptTokensDetails.CachedTokens
+			}
 		}
 		return chunk, nil
 	}, &d.Tools)

@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html/template"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -64,6 +66,39 @@ type LLM struct {
 
 	WholeContent string // whole answer from llm
 	LoopNum      int
+
+	// stats shown under the answer
+	StartTime        time.Time
+	FirstChunkTime   time.Time
+	PromptTokens     int
+	CompletionTokens int
+	CachedTokens     int
+}
+
+// statsFooter render model, latency and token usage of this answer
+func (l *LLM) statsFooter() string {
+	line := fmt.Sprintf("%s %.1fs", l.Model, time.Since(l.StartTime).Seconds())
+	if !l.FirstChunkTime.IsZero() {
+		line += fmt.Sprintf(" 首字 %.1fs", l.FirstChunkTime.Sub(l.StartTime).Seconds())
+	}
+	footer := "`" + line + "`"
+
+	if l.PromptTokens > 0 || l.CompletionTokens > 0 {
+		usage := "↑ " + formatTokenNum(l.PromptTokens)
+		if l.CachedTokens > 0 && l.PromptTokens > 0 {
+			usage += fmt.Sprintf(" (缓存 %s %.1f%%)", formatTokenNum(l.CachedTokens), float64(l.CachedTokens)*100/float64(l.PromptTokens))
+		}
+		usage += " · ↓ " + formatTokenNum(l.CompletionTokens)
+		footer += "  \n`" + usage + "`"
+	}
+	return footer
+}
+
+func formatTokenNum(num int) string {
+	if num < 1000 {
+		return strconv.Itoa(num)
+	}
+	return fmt.Sprintf("%.1fk", float64(num)/1000)
 }
 
 type LLMClient interface {
@@ -167,6 +202,7 @@ func (l *LLM) InsertCharacter(ctx context.Context) {
 func NewLLM(opts ...Option) *LLM {
 	l := new(LLM)
 	l.Cs = new(param.ContextState)
+	l.StartTime = time.Now()
 	for _, opt := range opts {
 		opt(l)
 	}

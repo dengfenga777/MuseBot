@@ -39,6 +39,10 @@ type LLMStreamChunk struct {
 	ToolCalls []LLMToolCall
 	Usage     int
 	HasUsage  bool
+
+	PromptTokens     int
+	CompletionTokens int
+	CachedTokens     int
 }
 
 func retryLLMRequest[T any](l *LLM, operation func() (T, error)) (T, error) {
@@ -209,10 +213,16 @@ func receiveLLMStream(ctx context.Context, l *LLM, next func() (LLMStreamChunk, 
 		}
 
 		if !hasTools {
+			if chunk.Content != "" && l.FirstChunkTime.IsZero() {
+				l.FirstChunkTime = time.Now()
+			}
 			msgInfo = l.SendMsg(msgInfo, chunk.Content)
 		}
 		if chunk.HasUsage {
 			l.Cs.Token += chunk.Usage
+			l.PromptTokens += chunk.PromptTokens
+			l.CompletionTokens += chunk.CompletionTokens
+			l.CachedTokens += chunk.CachedTokens
 		}
 	}
 }
@@ -230,6 +240,9 @@ func sendLLMStreamOutput(l *LLM, msgInfo *param.MsgInfo, hasTools bool) {
 	}
 	if conf.BaseConfInfo.Powered != "" {
 		msgInfo.Content += "\n\n" + conf.BaseConfInfo.Powered
+	}
+	if conf.BaseConfInfo.ShowStats && !hasTools {
+		msgInfo.Content += "\n\n" + l.statsFooter()
 	}
 	l.MessageChan <- msgInfo
 }

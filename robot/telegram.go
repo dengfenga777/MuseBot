@@ -3,12 +3,16 @@ package robot
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"image"
+	"path/filepath"
 	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/disintegration/imaging"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -228,6 +232,9 @@ func (t *TelegramRobot) checkValid() bool {
 		}
 
 		t.ImageContent = t.GetPhotoContent()
+		if docText := t.GetDocumentText(); docText != "" {
+			t.Prompt += docText
+		}
 		t.AudioContent = t.GetAudioContent()
 		var err error
 		if t.AudioContent != nil {
@@ -330,7 +337,7 @@ func (t *TelegramRobot) skipThisMsg() bool {
 
 	if t.Update.Message.Chat.Type == "private" {
 		if strings.TrimSpace(t.getMsgContent()) == "" &&
-			t.Update.Message.Voice == nil && t.Update.Message.Photo == nil {
+			t.Update.Message.Voice == nil && t.Update.Message.Photo == nil && t.Update.Message.Document == nil {
 			return true
 		}
 
@@ -341,11 +348,23 @@ func (t *TelegramRobot) skipThisMsg() bool {
 			return true
 		}
 
-		if !strings.Contains(t.getMsgContent(), "@"+t.Bot.Self.UserName) {
+		if !strings.Contains(t.getMsgContent(), "@"+t.Bot.Self.UserName) && !t.hitWakeWord() {
 			return true
 		}
 	}
 
+	return false
+}
+
+// hitWakeWord check if group msg contains one of the configured wake words
+func (t *TelegramRobot) hitWakeWord() bool {
+	content := t.getMsgContent()
+	for _, word := range strings.Split(conf.BaseConfInfo.WakeWords, ",") {
+		word = strings.TrimSpace(word)
+		if word != "" && strings.Contains(content, word) {
+			return true
+		}
+	}
 	return false
 }
 
@@ -1003,7 +1022,16 @@ func (t *TelegramRobot) GetAudioContent() []byte {
 }
 
 func (t *TelegramRobot) GetPhotoContent() []byte {
-	if t.Update.Message == nil || t.Update.Message.Photo == nil {
+	if t.Update.Message == nil {
+		return nil
+	}
+
+	// image sent as file
+	if t.Update.Message.Photo == nil {
+		doc := t.Update.Message.Document
+		if doc != nil && strings.HasPrefix(doc.MimeType, "image/") && doc.FileSize < 8*1024*1024 {
+			return t.downloadTelegramFile(doc.FileID)
+		}
 		return nil
 	}
 
@@ -1030,6 +1058,58 @@ func (t *TelegramRobot) GetPhotoContent() []byte {
 	}
 
 	return photoContent
+}
+
+// GetDocumentText read small text files so llm can see the file content
+func (t *TelegramRobot) GetDocumentText() string {
+	if t.Update.Message == nil || t.Update.Message.Document == nil {
+		return ""
+	}
+
+	doc := t.Update.Message.Document
+	if doc.FileSize > 512*1024 || !isTextDocument(doc.MimeType, doc.FileName) {
+		return ""
+	}
+
+	content := t.downloadTelegramFile(doc.FileID)
+	if len(content) == 0 || !utf8.Valid(content) {
+		return ""
+	}
+
+	return fmt.Sprintf("\n\nFile %s:\n```\n%s\n```", doc.FileName, string(content))
+}
+
+func isTextDocument(mimeType, fileName string) bool {
+	if strings.HasPrefix(mimeType, "text/") {
+		return true
+	}
+	switch mimeType {
+	case "application/json", "application/xml", "application/x-yaml", "application/yaml",
+		"application/javascript", "application/x-sh", "application/toml", "application/sql":
+		return true
+	}
+	switch strings.ToLower(filepath.Ext(fileName)) {
+	case ".txt", ".md", ".log", ".csv", ".json", ".yaml", ".yml", ".toml", ".ini", ".conf", ".env",
+		".xml", ".html", ".css", ".js", ".ts", ".py", ".go", ".java", ".c", ".cpp", ".h", ".rs",
+		".sh", ".sql", ".php", ".rb", ".kt", ".swift", ".lua":
+		return true
+	}
+	return false
+}
+
+func (t *TelegramRobot) downloadTelegramFile(fileID string) []byte {
+	file, err := t.Bot.GetFile(tgbotapi.FileConfig{FileID: fileID})
+	if err != nil {
+		logger.WarnCtx(t.Robot.Ctx, "get file fail", "err", err)
+		return nil
+	}
+
+	content, err := utils.DownloadFile(file.Link(t.Bot.Token))
+	if err != nil {
+		logger.WarnCtx(t.Robot.Ctx, "download file fail", "err", err)
+		return nil
+	}
+	return content
 }
 
 func (t *TelegramRobot) getMessage() *tgbotapi.Message {
@@ -1071,54 +1151,112 @@ func (t *TelegramRobot) sendTextStream(messageChan *MsgChan) {
 	chatIdStr, msgIdStr, _ := t.Robot.GetChatIdAndMsgIdAndUserID()
 	msgId := utils.ParseInt(msgIdStr)
 	chatId := int64(utils.ParseInt(chatIdStr))
-	parseMode := tgbotapi.ModeMarkdown
+
+	// show a thinking placeholder and typing status until llm answers
+	thinkingMsgId, err := t.sendRichMarkdown(chatId, msgId, i18n.GetMessage("thinking", nil))
+	if err != nil {
+		logger.WarnCtx(t.Robot.Ctx, "send thinking msg fail", "err", err)
+	}
+
+	typingDone := make(chan struct{})
+	defer close(typingDone)
+	go func() {
+		ticker := time.NewTicker(4 * time.Second)
+		defer ticker.Stop()
+		for {
+			t.Bot.Request(tgbotapi.NewChatAction(chatId, tgbotapi.ChatTyping))
+			select {
+			case <-typingDone:
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+
+	defer func() {
+		// llm sent nothing to stream, remove the placeholder
+		if thinkingMsgId != 0 {
+			t.Bot.Request(tgbotapi.NewDeleteMessage(chatId, thinkingMsgId))
+		}
+	}()
 
 	for msg = range messageChan.NormalMessageChan {
 		if len(msg.Content) == 0 {
 			msg.Content = "get nothing from llm!"
 		}
 
+		// reuse the placeholder for the first answer message
+		if msg.MsgId == "" && thinkingMsgId != 0 {
+			msg.MsgId = strconv.Itoa(thinkingMsgId)
+			thinkingMsgId = 0
+		}
+
 		if msg.MsgId == "" {
-			tgMsgInfo := tgbotapi.NewMessage(chatId, msg.Content)
-			tgMsgInfo.ReplyToMessageID = msgId
-			tgMsgInfo.ParseMode = parseMode
-			sendInfo, err := t.Bot.Send(tgMsgInfo)
+			sendMsgId, err := t.sendRichMarkdown(chatId, msgId, msg.Content)
+			if err != nil && t.sleepUtilNoLimit(msgId, err) {
+				sendMsgId, err = t.sendRichMarkdown(chatId, msgId, msg.Content)
+			}
 			if err != nil {
-				if t.sleepUtilNoLimit(msgId, err) {
-					sendInfo, err = t.Bot.Send(tgMsgInfo)
-				} else if strings.Contains(err.Error(), "can't parse entities") {
-					tgMsgInfo.ParseMode = ""
-					sendInfo, err = t.Bot.Send(tgMsgInfo)
-				} else {
-					_, err = t.Bot.Send(tgMsgInfo)
-				}
+				logger.WarnCtx(t.Robot.Ctx, "send rich message fail, fallback to plain text", "msgID", msgId, "err", err)
+				tgMsgInfo := tgbotapi.NewMessage(chatId, msg.Content)
+				tgMsgInfo.ReplyToMessageID = msgId
+				sendInfo, err := t.Bot.Send(tgMsgInfo)
 				if err != nil {
 					logger.WarnCtx(t.Robot.Ctx, "Error sending message:", "msgID", msgId, "err", err)
 					continue
 				}
+				sendMsgId = sendInfo.MessageID
 			}
-			msg.MsgId = strconv.Itoa(sendInfo.MessageID)
+			msg.MsgId = strconv.Itoa(sendMsgId)
 		} else {
-			updateMsg := tgbotapi.NewEditMessageText(chatId, utils.ParseInt(msg.MsgId), msg.Content)
-			updateMsg.ParseMode = parseMode
-			_, err := t.Bot.Send(updateMsg)
-			if err != nil {
-				// try again
-				if t.sleepUtilNoLimit(msgId, err) {
-					_, err = t.Bot.Send(updateMsg)
-				} else if strings.Contains(err.Error(), "can't parse entities") {
-					updateMsg.ParseMode = ""
-					_, err = t.Bot.Send(updateMsg)
-				} else {
-					_, err = t.Bot.Send(updateMsg)
-				}
+			editMsgId := utils.ParseInt(msg.MsgId)
+			err := t.editRichMarkdown(chatId, editMsgId, msg.Content)
+			if err != nil && t.sleepUtilNoLimit(msgId, err) {
+				err = t.editRichMarkdown(chatId, editMsgId, msg.Content)
+			}
+			if err != nil && !strings.Contains(err.Error(), "message is not modified") {
+				logger.WarnCtx(t.Robot.Ctx, "edit rich message fail, fallback to plain text", "msgID", msgId, "err", err)
+				_, err = t.Bot.Send(tgbotapi.NewEditMessageText(chatId, editMsgId, msg.Content))
 				if err != nil {
 					logger.WarnCtx(t.Robot.Ctx, "Error editing message", "msgID", msgId, "err", err)
 				}
 			}
 		}
-
 	}
+}
+
+// sendRichMarkdown send markdown content as telegram rich message, return the message id
+func (t *TelegramRobot) sendRichMarkdown(chatId int64, replyToMsgId int, content string) (int, error) {
+	params := tgbotapi.Params{}
+	params.AddNonZero64("chat_id", chatId)
+	params.AddInterface("rich_message", map[string]string{"markdown": content})
+	if replyToMsgId != 0 {
+		params.AddInterface("reply_parameters", map[string]any{
+			"message_id":                  replyToMsgId,
+			"allow_sending_without_reply": true,
+		})
+	}
+
+	resp, err := t.Bot.MakeRequest("sendRichMessage", params)
+	if err != nil {
+		return 0, err
+	}
+
+	var sendInfo tgbotapi.Message
+	if err = json.Unmarshal(resp.Result, &sendInfo); err != nil {
+		return 0, err
+	}
+	return sendInfo.MessageID, nil
+}
+
+// editRichMarkdown replace message content with markdown rich message
+func (t *TelegramRobot) editRichMarkdown(chatId int64, msgId int, content string) error {
+	params := tgbotapi.Params{}
+	params.AddNonZero64("chat_id", chatId)
+	params.AddNonZero("message_id", msgId)
+	params.AddInterface("rich_message", map[string]string{"markdown": content})
+	_, err := t.Bot.MakeRequest("editMessageText", params)
+	return err
 }
 
 func (t *TelegramRobot) sendVoiceContent(voiceContent []byte, duration int) error {
@@ -1170,5 +1308,9 @@ func (t *TelegramRobot) getPrompt() string {
 }
 
 func (t *TelegramRobot) getPerMsgLen() int {
+	// rich messages allow up to 32768 characters, plain messages only 4096
+	if conf.BaseConfInfo.IsStreaming {
+		return 30000
+	}
 	return 3596
 }

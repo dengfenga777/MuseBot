@@ -1341,6 +1341,7 @@ func (r *RobotInfo) ExecLLM(msgContent string, msgChan *MsgChan) {
 		llm.WithContentParameter(map[string]string{
 			"username":  r.Robot.getUserName(),
 			"image_day": strconv.Itoa(conf.BaseConfInfo.ImageDay),
+			"now":       time.Now().Format("2006-01-02 15:04 Monday MST"),
 		}),
 		llm.WithTaskTools(&conf.AgentInfo{
 			DeepseekTool: conf.DeepseekTools,

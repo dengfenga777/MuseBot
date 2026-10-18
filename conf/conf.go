@@ -55,6 +55,7 @@ type BaseConf struct {
 	ErnieSK           string `json:"ernie_sk"`
 
 	BotName           string `json:"bot_name"`
+	WakeWords         string `json:"wake_words"`
 	Type              string `json:"type"`
 	MediaType         string `json:"media_type"`
 	CustomUrl         string `json:"custom_url"`
@@ -79,6 +80,7 @@ type BaseConf struct {
 	CompressThreshold  int    `json:"compress_threshold"`
 	CompressKeepPairs  int    `json:"compress_keep_pairs"`
 	Powered            string `json:"powered"`
+	ShowStats          bool   `json:"show_stats"`
 	SendMcpRes         bool   `json:"send_mcp_res"`
 	SendMcpMediaToLLM  bool   `json:"send_mcp_media_to_llm"`
 	DefaultModel       string `json:"default_model"`
@@ -159,6 +161,7 @@ func InitConf() {
 	flag.StringVar(&BaseConfInfo.ChatAnyWhereToken, "chat_any_where_token", "", "chatAnyWhere Token")
 
 	flag.StringVar(&BaseConfInfo.BotName, "bot_name", "MuseBot", "bot name")
+	flag.StringVar(&BaseConfInfo.WakeWords, "wake_words", "", "comma separated words that trigger the bot in groups")
 	flag.StringVar(&BaseConfInfo.CustomUrl, "custom_url", "", "custom url")
 	flag.StringVar(&BaseConfInfo.CustomPath, "custom_path", "", "custom path")
 	flag.StringVar(&BaseConfInfo.Type, "type", "", "llm type: deepseek gemini openai openrouter vol chatanywhere orcarouter")
@@ -175,6 +178,7 @@ func InitConf() {
 	flag.IntVar(&BaseConfInfo.MaxQAPair, "max_qa_pari", 100, "max qa pair")
 	flag.StringVar(&BaseConfInfo.Character, "character", "", "ai's character")
 	flag.StringVar(&BaseConfInfo.Powered, "powered", "", "powered by")
+	flag.BoolVar(&BaseConfInfo.ShowStats, "show_stats", false, "show model, latency and token usage under answers")
 	flag.StringVar(&BaseConfInfo.ImagePath, "image_path", "./conf/img/", "image path")
 
 	flag.StringVar(&BaseConfInfo.CrtFile, "crt_file", "", "public key file")
@@ -314,6 +318,10 @@ func InitConf() {
 
 	if os.Getenv("BOT_NAME") != "" {
 		BaseConfInfo.BotName = os.Getenv("BOT_NAME")
+	}
+
+	if os.Getenv("WAKE_WORDS") != "" {
+		BaseConfInfo.WakeWords = os.Getenv("WAKE_WORDS")
 	}
 
 	if os.Getenv("TYPE") != "" {
@@ -459,6 +467,10 @@ func InitConf() {
 		BaseConfInfo.Powered = os.Getenv("POWERED")
 	}
 
+	if os.Getenv("SHOW_STATS") != "" {
+		BaseConfInfo.ShowStats = os.Getenv("SHOW_STATS") == "true"
+	}
+
 	if os.Getenv("SEND_MCP_RES") != "" {
 		BaseConfInfo.SendMcpRes = os.Getenv("SEND_MCP_RES") == "true"
 	}
@@ -589,9 +601,11 @@ func logConf(allowedUserIds, allowedGroupIds, adminUserIds string) {
 	logger.Info("CONF", "CaFile", BaseConfInfo.CaFile)
 	logger.Info("CONF", "MediaType", BaseConfInfo.MediaType)
 	logger.Info("CONF", "BotName", BaseConfInfo.BotName)
+	logger.Info("CONF", "WakeWords", BaseConfInfo.WakeWords)
 	logger.Info("CONF", "MaxQAPair", BaseConfInfo.MaxQAPair)
 	logger.Info("CONF", "SmartMode", BaseConfInfo.SmartMode)
 	logger.Info("CONF", "Powered", BaseConfInfo.Powered)
+	logger.Info("CONF", "ShowStats", BaseConfInfo.ShowStats)
 	logger.Info("CONF", "Character", BaseConfInfo.Character)
 	logger.Info("CONF", "ContextExpireTime", BaseConfInfo.ContextExpireTime)
 	logger.Info("CONF", "EnableAutoCompress", BaseConfInfo.EnableAutoCompress)
