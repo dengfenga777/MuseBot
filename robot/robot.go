@@ -194,7 +194,7 @@ func (r *RobotInfo) AddUserInfo() bool {
 // hasDocument report whether the message carries a file
 func (r *RobotInfo) hasDocument() bool {
 	if telegramRobot, ok := r.Robot.(*TelegramRobot); ok {
-		msg := telegramRobot.getMessage()
+		msg := telegramRobot.attachmentMessage()
 		return msg != nil && msg.Document != nil
 	}
 	return false

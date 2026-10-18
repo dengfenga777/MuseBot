@@ -233,8 +233,18 @@ func (t *TelegramRobot) checkValid() bool {
 		}
 
 		t.ImageContent = t.GetPhotoContent()
-		if docText := t.GetDocumentText(); docText != "" {
+		docText := t.GetDocumentText()
+		if docText != "" {
 			t.Prompt += docText
+		}
+		if attachMsg := t.attachmentMessage(); attachMsg != nil {
+			fileName, mimeType := "", ""
+			if attachMsg.Document != nil {
+				fileName, mimeType = attachMsg.Document.FileName, attachMsg.Document.MimeType
+			}
+			logger.InfoCtx(t.Robot.Ctx, "message attachment", "fromReply", attachMsg != t.Update.Message,
+				"photo", attachMsg.Photo != nil, "file", fileName, "mime", mimeType,
+				"image", len(t.ImageContent), "text", len(docText))
 		}
 		t.AudioContent = t.GetAudioContent()
 		var err error
@@ -1022,14 +1032,31 @@ func (t *TelegramRobot) GetAudioContent() []byte {
 	return voice
 }
 
+// attachmentMessage return the message holding the photo or file to use:
+// the message itself, or the message it replies to
+func (t *TelegramRobot) attachmentMessage() *tgbotapi.Message {
+	msg := t.Update.Message
+	if msg == nil {
+		return nil
+	}
+	if msg.Photo != nil || msg.Document != nil {
+		return msg
+	}
+	if reply := msg.ReplyToMessage; reply != nil && (reply.Photo != nil || reply.Document != nil) {
+		return reply
+	}
+	return nil
+}
+
 func (t *TelegramRobot) GetPhotoContent() []byte {
-	if t.Update.Message == nil {
+	msg := t.attachmentMessage()
+	if msg == nil {
 		return nil
 	}
 
 	// image sent as file
-	if t.Update.Message.Photo == nil {
-		doc := t.Update.Message.Document
+	if msg.Photo == nil {
+		doc := msg.Document
 		if doc != nil && strings.HasPrefix(doc.MimeType, "image/") && doc.FileSize < 8*1024*1024 {
 			return t.downloadTelegramFile(doc.FileID)
 		}
@@ -1037,37 +1064,24 @@ func (t *TelegramRobot) GetPhotoContent() []byte {
 	}
 
 	var photo tgbotapi.PhotoSize
-	for i := len(t.Update.Message.Photo) - 1; i >= 0; i-- {
-		if t.Update.Message.Photo[i].FileSize < 8*1024*1024 {
-			photo = t.Update.Message.Photo[i]
+	for i := len(msg.Photo) - 1; i >= 0; i-- {
+		if msg.Photo[i].FileSize < 8*1024*1024 {
+			photo = msg.Photo[i]
 			break
 		}
 	}
 
-	fileID := photo.FileID
-	file, err := t.Bot.GetFile(tgbotapi.FileConfig{FileID: fileID})
-	if err != nil {
-		logger.WarnCtx(t.Robot.Ctx, "get file fail", "err", err)
-		return nil
-	}
-
-	downloadURL := file.Link(t.Bot.Token)
-	photoContent, err := utils.DownloadFile(downloadURL)
-	if err != nil {
-		logger.WarnCtx(t.Robot.Ctx, "read response fail", "err", err)
-		return nil
-	}
-
-	return photoContent
+	return t.downloadTelegramFile(photo.FileID)
 }
 
 // GetDocumentText read small text files so llm can see the file content
 func (t *TelegramRobot) GetDocumentText() string {
-	if t.Update.Message == nil || t.Update.Message.Document == nil {
+	msg := t.attachmentMessage()
+	if msg == nil || msg.Document == nil {
 		return ""
 	}
 
-	doc := t.Update.Message.Document
+	doc := msg.Document
 	if doc.FileSize > 128*1024 || !isTextDocument(doc.MimeType, doc.FileName) {
 		return ""
 	}
