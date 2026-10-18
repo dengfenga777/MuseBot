@@ -298,8 +298,10 @@ type MsgInfo struct {
 	PartContent string
 	SendLen     int
 	Finished    bool
-	// Intermediate marks text the llm wrote before calling tools, not the final answer
+	// Intermediate marks a progress update sent while the llm calls tools, not the final answer
 	Intermediate bool
+	// Status describes the tool action shown to the user for an intermediate message
+	Status string
 }
 
 type ImgResponse struct {

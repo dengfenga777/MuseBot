@@ -75,6 +75,11 @@ type LLM struct {
 	CachedTokens     int
 }
 
+// toolsEnabled report whether the llm may answer with tool calls
+func (l *LLM) toolsEnabled() bool {
+	return len(l.OpenAITools)+len(l.DeepseekTools)+len(l.VolTools)+len(l.GeminiTools)+len(l.OpenRouterTools) > 0
+}
+
 // statsFooter render model, latency and token usage of this answer
 func (l *LLM) statsFooter() string {
 	line := fmt.Sprintf("%s %.1fs", l.Model, time.Since(l.StartTime).Seconds())

@@ -12,6 +12,7 @@ import (
 	"github.com/cohesion-org/deepseek-go"
 	"github.com/sashabaranov/go-openai"
 	"github.com/yincongcyincong/MuseBot/conf"
+	"github.com/yincongcyincong/MuseBot/i18n"
 	"github.com/yincongcyincong/MuseBot/logger"
 	"github.com/yincongcyincong/MuseBot/metrics"
 	"github.com/yincongcyincong/MuseBot/param"
@@ -176,6 +177,32 @@ func (s *LLMToolState) execute(ctx context.Context, l *LLM) error {
 	return nil
 }
 
+// sendToolStatus tell the user which kind of tool runs instead of showing the llm's chatter
+func sendToolStatus(l *LLM, msgInfo *param.MsgInfo, calls []LLMToolCall) {
+	if l.MessageChan == nil || msgInfo == nil {
+		return
+	}
+	msgInfo.Intermediate = true
+	msgInfo.Status = toolStatusText(calls)
+	l.MessageChan <- msgInfo
+}
+
+func toolStatusText(calls []LLMToolCall) string {
+	for _, call := range calls {
+		name := strings.ToLower(call.Name)
+		if strings.Contains(name, "search") {
+			return i18n.GetMessage("tool_status_search", nil)
+		}
+	}
+	for _, call := range calls {
+		name := strings.ToLower(call.Name)
+		if strings.Contains(name, "read") || strings.Contains(name, "fetch") || strings.Contains(name, "url") {
+			return i18n.GetMessage("tool_status_read", nil)
+		}
+	}
+	return i18n.GetMessage("tool_status_other", nil)
+}
+
 func toolErrorContent(err error) string {
 	return "Tool call failed: " + err.Error() + ". Try another source or tool, or answer with the information you already have."
 }
@@ -190,14 +217,35 @@ func (s *LLMToolState) reset() {
 	s.Results = nil
 }
 
+// toolPreambleHoldBytes is how much answer text is held back while tools are enabled.
+// Text followed by a tool call is only "let me search" chatter and is never shown.
+const toolPreambleHoldBytes = 300
+
 func receiveLLMStream(ctx context.Context, l *LLM, next func() (LLMStreamChunk, error), tools *LLMToolState) (*param.MsgInfo, bool, error) {
 	msgInfo := &param.MsgInfo{SendLen: FirstSendLen}
 	hasTools := false
+
+	holding := l.toolsEnabled()
+	pending := ""
+	flush := func() {
+		holding = false
+		if pending != "" {
+			msgInfo = l.SendMsg(msgInfo, pending)
+			pending = ""
+		}
+	}
 
 	for {
 		chunk, err := next()
 		if errors.Is(err, io.EOF) {
 			logger.InfoCtx(l.Ctx, "stream finished", "updateMsgID", l.MsgId)
+			if hasTools {
+				l.WholeContent += pending
+				pending = ""
+				sendToolStatus(l, msgInfo, tools.Calls)
+			} else {
+				flush()
+			}
 			if err := tools.execute(ctx, l); err != nil {
 				return msgInfo, hasTools, err
 			}
@@ -205,6 +253,9 @@ func receiveLLMStream(ctx context.Context, l *LLM, next func() (LLMStreamChunk, 
 		}
 		if err != nil {
 			logger.WarnCtx(l.Ctx, "stream error", "updateMsgID", l.MsgId, "err", err)
+			if !hasTools {
+				flush()
+			}
 			return msgInfo, hasTools, err
 		}
 
@@ -223,7 +274,14 @@ func receiveLLMStream(ctx context.Context, l *LLM, next func() (LLMStreamChunk, 
 			if chunk.Content != "" && l.FirstChunkTime.IsZero() {
 				l.FirstChunkTime = time.Now()
 			}
-			msgInfo = l.SendMsg(msgInfo, chunk.Content)
+			if holding {
+				pending += chunk.Content
+				if len(pending) > toolPreambleHoldBytes {
+					flush()
+				}
+			} else {
+				msgInfo = l.SendMsg(msgInfo, chunk.Content)
+			}
 		}
 		if chunk.HasUsage {
 			l.Cs.Token += chunk.Usage
@@ -245,9 +303,8 @@ func sendLLMStreamOutput(l *LLM, msgInfo *param.MsgInfo, hasTools bool) {
 	if msgInfo == nil {
 		msgInfo = &param.MsgInfo{}
 	}
+	// tool rounds already showed their status before the tools ran
 	if hasTools {
-		msgInfo.Intermediate = true
-		l.MessageChan <- msgInfo
 		return
 	}
 	if conf.BaseConfInfo.Powered != "" {

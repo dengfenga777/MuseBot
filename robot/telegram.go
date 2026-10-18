@@ -1210,7 +1210,7 @@ func (t *TelegramRobot) sendTextStream(messageChan *MsgChan) {
 		}
 		content := msg.Content
 		if msg.Intermediate {
-			content = "🔍 " + content
+			content = msg.Status
 		}
 
 		if msg.MsgId == "" {
@@ -1322,7 +1322,7 @@ func (t *TelegramRobot) sendTextStreamDraft(messageChan *MsgChan, chatId int64, 
 
 		content := msg.Content
 		if msg.Intermediate {
-			content = "<tg-thinking>" + msg.Content + "</tg-thinking>"
+			content = "<tg-thinking>" + msg.Status + "</tg-thinking>"
 		}
 
 		mu.Lock()
