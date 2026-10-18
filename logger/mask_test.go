@@ -17,8 +17,8 @@ func TestMaskSecret(t *testing.T) {
 
 func TestMaskDSN(t *testing.T) {
 	cases := map[string]string{
-		"./data/muse_bot.db":                       "./data/muse_bot.db",
-		"root:p@ss@tcp(127.0.0.1:3306)/muse?a=b":  "root:****@tcp(127.0.0.1:3306)/muse?a=b",
+		"./data/muse_bot.db":                     "./data/muse_bot.db",
+		"root:p@ss@tcp(127.0.0.1:3306)/muse?a=b": "root:****@tcp(127.0.0.1:3306)/muse?a=b",
 	}
 	for in, want := range cases {
 		if got := MaskDSN(in); got != want {

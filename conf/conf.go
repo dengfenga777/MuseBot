@@ -81,6 +81,7 @@ type BaseConf struct {
 	CompressKeepPairs  int    `json:"compress_keep_pairs"`
 	Powered            string `json:"powered"`
 	ShowStats          bool   `json:"show_stats"`
+	SearxngURL         string `json:"searxng_url"`
 	SendMcpRes         bool   `json:"send_mcp_res"`
 	SendMcpMediaToLLM  bool   `json:"send_mcp_media_to_llm"`
 	DefaultModel       string `json:"default_model"`
@@ -179,6 +180,7 @@ func InitConf() {
 	flag.StringVar(&BaseConfInfo.Character, "character", "", "ai's character")
 	flag.StringVar(&BaseConfInfo.Powered, "powered", "", "powered by")
 	flag.BoolVar(&BaseConfInfo.ShowStats, "show_stats", false, "show model, latency and token usage under answers")
+	flag.StringVar(&BaseConfInfo.SearxngURL, "searxng_url", "", "searxng base url used by the builtin web_search tool")
 	flag.StringVar(&BaseConfInfo.ImagePath, "image_path", "./conf/img/", "image path")
 
 	flag.StringVar(&BaseConfInfo.CrtFile, "crt_file", "", "public key file")
@@ -471,6 +473,10 @@ func InitConf() {
 		BaseConfInfo.ShowStats = os.Getenv("SHOW_STATS") == "true"
 	}
 
+	if os.Getenv("SEARXNG_URL") != "" {
+		BaseConfInfo.SearxngURL = os.Getenv("SEARXNG_URL")
+	}
+
 	if os.Getenv("SEND_MCP_RES") != "" {
 		BaseConfInfo.SendMcpRes = os.Getenv("SEND_MCP_RES") == "true"
 	}
@@ -606,6 +612,7 @@ func logConf(allowedUserIds, allowedGroupIds, adminUserIds string) {
 	logger.Info("CONF", "SmartMode", BaseConfInfo.SmartMode)
 	logger.Info("CONF", "Powered", BaseConfInfo.Powered)
 	logger.Info("CONF", "ShowStats", BaseConfInfo.ShowStats)
+	logger.Info("CONF", "SearxngURL", BaseConfInfo.SearxngURL)
 	logger.Info("CONF", "Character", BaseConfInfo.Character)
 	logger.Info("CONF", "ContextExpireTime", BaseConfInfo.ContextExpireTime)
 	logger.Info("CONF", "EnableAutoCompress", BaseConfInfo.EnableAutoCompress)

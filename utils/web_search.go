@@ -13,6 +13,9 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/yincongcyincong/MuseBot/conf"
+	"github.com/yincongcyincong/MuseBot/logger"
 )
 
 const (
@@ -56,6 +59,18 @@ func WebSearch(ctx context.Context, query string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, webSearchTimeout)
 	defer cancel()
 
+	if conf.BaseConfInfo.SearxngURL != "" {
+		results, err := searxngWebSearch(ctx, conf.BaseConfInfo.SearxngURL, query)
+		if err == nil && len(results) > 0 {
+			encoded, encodeErr := json.Marshal(WebSearchResponse{Query: query, Results: results})
+			if encodeErr != nil {
+				return "", encodeErr
+			}
+			return string(encoded), nil
+		}
+		logger.WarnCtx(ctx, "searxng search fail, fallback to duckduckgo", "err", err, "results", len(results))
+	}
+
 	content, err := duckDuckGoWebSearch(ctx, query)
 	if err == nil {
 		results := parseWebSearchHTML(content, webSearchMaxResults)
@@ -69,6 +84,50 @@ func WebSearch(ctx context.Context, query string) (string, error) {
 	}
 
 	return bingWebSearch(ctx, query)
+}
+
+// searxngWebSearch query a self-hosted searxng instance through its json api
+func searxngWebSearch(ctx context.Context, baseURL, query string) ([]WebSearchResult, error) {
+	requestCtx, cancel := context.WithTimeout(ctx, webSearchPrimaryTimeout)
+	defer cancel()
+
+	searchURL := strings.TrimRight(baseURL, "/") + "/search?format=json&q=" + url.QueryEscape(query)
+	request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, searchURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	response, err := (&http.Client{Timeout: webSearchPrimaryTimeout}).Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("searxng status %d", response.StatusCode)
+	}
+
+	var searxngResp struct {
+		Results []struct {
+			Title   string `json:"title"`
+			URL     string `json:"url"`
+			Content string `json:"content"`
+		} `json:"results"`
+	}
+	if err = json.NewDecoder(io.LimitReader(response.Body, webSearchMaxBytes)).Decode(&searxngResp); err != nil {
+		return nil, err
+	}
+
+	results := make([]WebSearchResult, 0, webSearchMaxResults)
+	for _, item := range searxngResp.Results {
+		if item.URL == "" || !strings.HasPrefix(item.URL, "http") {
+			continue
+		}
+		results = append(results, WebSearchResult{Title: item.Title, URL: item.URL, Snippet: item.Content})
+		if len(results) >= webSearchMaxResults {
+			break
+		}
+	}
+	return results, nil
 }
 
 func duckDuckGoWebSearch(ctx context.Context, query string) (string, error) {
