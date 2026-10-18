@@ -189,7 +189,19 @@ func InsertRecord(ctx context.Context) {
 		logger.ErrorCtx(ctx, "InsertRecord GetUsers err", "err", err)
 	}
 
+	// group chats keep their own context ids, load them as well
+	contextIds := make([]string, 0, len(users))
 	for _, user := range users {
+		contextIds = append(contextIds, user.UserId)
+	}
+	groupContextIds, err := getGroupContextIds()
+	if err != nil {
+		logger.ErrorCtx(ctx, "InsertRecord getGroupContextIds err", "err", err)
+	}
+	contextIds = append(contextIds, groupContextIds...)
+
+	for _, contextId := range contextIds {
+		user := User{UserId: contextId}
 		records, err := getRecordsByUserId(user.UserId)
 		if err != nil {
 			logger.Error("InsertRecord GetUsers err", "err", err)
@@ -214,6 +226,25 @@ func InsertRecord(ctx context.Context) {
 		}
 	}
 
+}
+
+// getGroupContextIds get context ids of group conversations that still have records
+func getGroupContextIds() ([]string, error) {
+	rows, err := DB.Query("SELECT DISTINCT user_id FROM records WHERE is_deleted = 0 and user_id like ?", "%"+ContextIdSep+"%")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 // getRecordsByUserId get latest 10 records by user_id
@@ -267,8 +298,8 @@ func DeleteRecord(userId string) error {
 }
 
 func GetTokenByUserIdAndTime(userId string, start, end int64) (int, error) {
-	querySQL := `SELECT sum(token) FROM records WHERE user_id = ? and create_time >= ? and create_time <= ?`
-	row := DB.QueryRow(querySQL, userId, start, end)
+	querySQL := `SELECT sum(token) FROM records WHERE (user_id = ? or user_id like ?) and create_time >= ? and create_time <= ?`
+	row := DB.QueryRow(querySQL, userId, userId+ContextIdSep+"%", start, end)
 
 	// scan row get result
 	var user User

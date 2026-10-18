@@ -191,6 +191,19 @@ func (r *RobotInfo) AddUserInfo() bool {
 
 }
 
+// GetContextId return the id that conversation history is stored under.
+// Telegram group chats get their own context per user, private chats keep the user id.
+func (r *RobotInfo) GetContextId() string {
+	chatId, _, userId := r.GetChatIdAndMsgIdAndUserID()
+	if telegramRobot, ok := r.Robot.(*TelegramRobot); ok {
+		msg := telegramRobot.getMessage()
+		if msg != nil && msg.Chat != nil && msg.Chat.Type != "private" && chatId != "" {
+			return db.GroupContextId(userId, chatId)
+		}
+	}
+	return userId
+}
+
 func (r *RobotInfo) GetChatIdAndMsgIdAndUserID() (string, string, string) {
 	chatId := ""
 	msgId := ""
@@ -1299,7 +1312,7 @@ func (r *RobotInfo) ExecLLM(msgContent string, msgChan *MsgChan) {
 		}
 	}()
 
-	chatId, msgId, userId := r.GetChatIdAndMsgIdAndUserID()
+	chatId, msgId, _ := r.GetChatIdAndMsgIdAndUserID()
 	content := r.Robot.getPrompt()
 	if len(content) == 0 {
 		if len(r.Robot.getImage()) > 0 {
@@ -1329,7 +1342,7 @@ func (r *RobotInfo) ExecLLM(msgContent string, msgChan *MsgChan) {
 
 	llmClient := llm.NewLLM(
 		llm.WithChatId(chatId),
-		llm.WithUserId(userId),
+		llm.WithUserId(r.GetContextId()),
 		llm.WithMsgId(msgId),
 		llm.WithMessageChan(msgChan.NormalMessageChan),
 		llm.WithHTTPMsgChan(msgChan.StrMessageChan),
@@ -1398,8 +1411,8 @@ func (r *RobotInfo) showStateInfo() {
 }
 
 func (r *RobotInfo) clearAllRecord() {
-	chatId, msgId, userId := r.GetChatIdAndMsgIdAndUserID()
-	db.DeleteMsgRecord(r.Ctx, userId)
+	chatId, msgId, _ := r.GetChatIdAndMsgIdAndUserID()
+	db.DeleteMsgRecord(r.Ctx, r.GetContextId())
 	deleteSuccMsg := i18n.GetMessage("delete_succ", nil)
 	r.SendMsg(chatId, deleteSuccMsg,
 		msgId, tgbotapi.ModeMarkdown, nil)
@@ -1408,9 +1421,9 @@ func (r *RobotInfo) clearAllRecord() {
 }
 
 func (r *RobotInfo) retryLastQuestion() {
-	chatId, msgId, userId := r.GetChatIdAndMsgIdAndUserID()
+	chatId, msgId, _ := r.GetChatIdAndMsgIdAndUserID()
 
-	records := db.GetMsgRecord(userId)
+	records := db.GetMsgRecord(r.GetContextId())
 	if records != nil && len(records.AQs) > 0 {
 		r.Robot.requestLLM(records.AQs[len(records.AQs)-1].Question)
 	} else {
@@ -1649,7 +1662,7 @@ func (r *RobotInfo) HandleUpdate(messageChan *MsgChan, encoding string) {
 }
 
 func (r *RobotInfo) InsertRecord() {
-	_, _, userId := r.GetChatIdAndMsgIdAndUserID()
+	userId := r.GetContextId()
 
 	content := ""
 	if len(r.Robot.getImage()) > 0 {
@@ -1693,7 +1706,7 @@ func (r *RobotInfo) smartMode() bool {
 		return true
 	}
 
-	chatId, msgId, userId := r.GetChatIdAndMsgIdAndUserID()
+	chatId, msgId, _ := r.GetChatIdAndMsgIdAndUserID()
 
 	smartModeParams := map[string]interface{}{
 		"prompt": r.Robot.getPrompt(),
@@ -1703,7 +1716,7 @@ func (r *RobotInfo) smartMode() bool {
 
 	llmClient := llm.NewLLM(
 		llm.WithChatId(chatId),
-		llm.WithUserId(userId),
+		llm.WithUserId(r.GetContextId()),
 		llm.WithMsgId(msgId),
 		llm.WithContent(smartModePrompt),
 		llm.WithContext(r.Ctx),

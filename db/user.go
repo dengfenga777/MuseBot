@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/yincongcyincong/MuseBot/conf"
@@ -112,7 +113,24 @@ func AddAvailToken(userId string, token int) error {
 	return err
 }
 
+// ContextIdSep separates the user id from the chat id in a group context id
+const ContextIdSep = "@"
+
+// GroupContextId build the conversation context id of a user inside a group chat
+func GroupContextId(userId, chatId string) string {
+	return userId + ContextIdSep + chatId
+}
+
+// UserIdFromContextId return the real user id of a conversation context id
+func UserIdFromContextId(contextId string) string {
+	if idx := strings.Index(contextId, ContextIdSep); idx >= 0 {
+		return contextId[:idx]
+	}
+	return contextId
+}
+
 func AddToken(userId string, token int) error {
+	userId = UserIdFromContextId(userId)
 	updateSQL := `UPDATE users SET token = token + ?, update_time = ? WHERE user_id = ?`
 	_, err := DB.Exec(updateSQL, token, time.Now().Unix(), userId)
 	return err
