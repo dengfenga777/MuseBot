@@ -240,7 +240,6 @@ func receiveLLMStream(ctx context.Context, l *LLM, next func() (LLMStreamChunk, 
 		if errors.Is(err, io.EOF) {
 			logger.InfoCtx(l.Ctx, "stream finished", "updateMsgID", l.MsgId)
 			if hasTools {
-				l.WholeContent += pending
 				pending = ""
 				sendToolStatus(l, msgInfo, tools.Calls)
 			} else {

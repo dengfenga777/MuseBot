@@ -111,6 +111,7 @@ func (d *OpenAIReq) Send(ctx context.Context, l *LLM) error {
 
 	metrics.APIRequestDuration.WithLabelValues(l.Model).Observe(time.Since(start).Seconds())
 
+	roundStart := len(l.WholeContent)
 	msgInfoContent, hasTools, err := receiveLLMStream(ctx, l, func() (LLMStreamChunk, error) {
 		response, err := stream.Recv()
 		if err != nil {
@@ -145,9 +146,15 @@ func (d *OpenAIReq) Send(ctx context.Context, l *LLM) error {
 
 	sendLLMStreamOutput(l, msgInfoContent, hasTools)
 	if hasTools && len(d.Tools.Results) != 0 {
+		// text of a tool round is not part of the final answer, keep it only in this round's message
+		if roundStart > len(l.WholeContent) {
+			roundStart = len(l.WholeContent)
+		}
+		roundContent := l.WholeContent[roundStart:]
+		l.WholeContent = l.WholeContent[:roundStart]
 		assistantMessage := openai.ChatCompletionMessage{
 			Role:      openai.ChatMessageRoleAssistant,
-			Content:   l.WholeContent,
+			Content:   roundContent,
 			ToolCalls: openAIToolCalls(d.Tools.Calls),
 		}
 		d.OpenAIMsgs = append(d.OpenAIMsgs, assistantMessage)
