@@ -55,8 +55,8 @@ func InitConfig() {
 	}
 
 	logger.Info("CONF", "DBType", BaseConfInfo.DBType)
-	logger.Info("CONF", "DBConf", BaseConfInfo.DBConf)
-	logger.Info("CONF", "SessionKey", BaseConfInfo.SessionKey)
+	logger.Info("CONF", "DBConf", logger.MaskDSN(BaseConfInfo.DBConf))
+	logger.Info("CONF", "SessionKey", logger.MaskSecret(BaseConfInfo.SessionKey))
 	logger.Info("CONF", "AdminPort", BaseConfInfo.AdminPort)
 	logger.Info("CONF", "CheckBotSec", BaseConfInfo.CheckBotSec)
 

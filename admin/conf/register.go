@@ -53,6 +53,6 @@ func EnvRegisterConf() {
 	logger.Info("REGISTER_CONF", "Type", RegisterConfInfo.Type)
 	logger.Info("REGISTER_CONF", "EtcdURLs", RegisterConfInfo.EtcdURLs)
 	logger.Info("REGISTER_CONF", "EtcdUsername", RegisterConfInfo.EtcdUsername)
-	logger.Info("REGISTER_CONF", "EtcdPassword", RegisterConfInfo.EtcdPassword)
+	logger.Info("REGISTER_CONF", "EtcdPassword", logger.MaskSecret(RegisterConfInfo.EtcdPassword))
 
 }
