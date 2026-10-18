@@ -204,7 +204,7 @@ func CreateBot(ctx context.Context) *tgbotapi.BotAPI {
 			Description: i18n.GetMessage("commands.cron.description", nil),
 		},
 		tgbotapi.BotCommand{
-			Command:     param.CronDel,
+			Command:     param.CronClear,
 			Description: i18n.GetMessage("commands.cron.description", nil),
 		},
 	)
