@@ -245,10 +245,15 @@ func sendLLMStreamOutput(l *LLM, msgInfo *param.MsgInfo, hasTools bool) {
 	if msgInfo == nil {
 		msgInfo = &param.MsgInfo{}
 	}
+	if hasTools {
+		msgInfo.Intermediate = true
+		l.MessageChan <- msgInfo
+		return
+	}
 	if conf.BaseConfInfo.Powered != "" {
 		msgInfo.Content += "\n\n" + conf.BaseConfInfo.Powered
 	}
-	if conf.BaseConfInfo.ShowStats && !hasTools {
+	if conf.BaseConfInfo.ShowStats {
 		msgInfo.Content += "\n\n" + l.statsFooter()
 	}
 	l.MessageChan <- msgInfo

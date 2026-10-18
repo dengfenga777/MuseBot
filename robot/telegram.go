@@ -1191,6 +1191,7 @@ func (t *TelegramRobot) sendTextStream(messageChan *MsgChan) {
 		}
 	}()
 
+	progressMsgId := 0
 	for msg = range messageChan.NormalMessageChan {
 		if len(msg.Content) == 0 {
 			msg.Content = "get nothing from llm!"
@@ -1202,14 +1203,24 @@ func (t *TelegramRobot) sendTextStream(messageChan *MsgChan) {
 			thinkingMsgId = 0
 		}
 
+		// text written before tool calls is progress, the next round overwrites it
+		if msg.MsgId == "" && progressMsgId != 0 {
+			msg.MsgId = strconv.Itoa(progressMsgId)
+			progressMsgId = 0
+		}
+		content := msg.Content
+		if msg.Intermediate {
+			content = "🔍 " + content
+		}
+
 		if msg.MsgId == "" {
-			sendMsgId, err := t.sendRichMarkdown(chatId, msgId, msg.Content)
+			sendMsgId, err := t.sendRichMarkdown(chatId, msgId, content)
 			if err != nil && t.sleepUtilNoLimit(msgId, err) {
-				sendMsgId, err = t.sendRichMarkdown(chatId, msgId, msg.Content)
+				sendMsgId, err = t.sendRichMarkdown(chatId, msgId, content)
 			}
 			if err != nil {
 				logger.WarnCtx(t.Robot.Ctx, "send rich message fail, fallback to plain text", "msgID", msgId, "err", err)
-				tgMsgInfo := tgbotapi.NewMessage(chatId, msg.Content)
+				tgMsgInfo := tgbotapi.NewMessage(chatId, content)
 				tgMsgInfo.ReplyToMessageID = msgId
 				sendInfo, err := t.Bot.Send(tgMsgInfo)
 				if err != nil {
@@ -1221,17 +1232,21 @@ func (t *TelegramRobot) sendTextStream(messageChan *MsgChan) {
 			msg.MsgId = strconv.Itoa(sendMsgId)
 		} else {
 			editMsgId := utils.ParseInt(msg.MsgId)
-			err := t.editRichMarkdown(chatId, editMsgId, msg.Content)
+			err := t.editRichMarkdown(chatId, editMsgId, content)
 			if err != nil && t.sleepUtilNoLimit(msgId, err) {
-				err = t.editRichMarkdown(chatId, editMsgId, msg.Content)
+				err = t.editRichMarkdown(chatId, editMsgId, content)
 			}
 			if err != nil && !strings.Contains(err.Error(), "message is not modified") {
 				logger.WarnCtx(t.Robot.Ctx, "edit rich message fail, fallback to plain text", "msgID", msgId, "err", err)
-				_, err = t.Bot.Send(tgbotapi.NewEditMessageText(chatId, editMsgId, msg.Content))
+				_, err = t.Bot.Send(tgbotapi.NewEditMessageText(chatId, editMsgId, content))
 				if err != nil {
 					logger.WarnCtx(t.Robot.Ctx, "Error editing message", "msgID", msgId, "err", err)
 				}
 			}
+		}
+
+		if msg.Intermediate && msg.MsgId != "" {
+			progressMsgId = utils.ParseInt(msg.MsgId)
 		}
 	}
 }
@@ -1298,23 +1313,30 @@ func (t *TelegramRobot) sendTextStreamDraft(messageChan *MsgChan, chatId int64, 
 			msg.Content = "get nothing from llm!"
 		}
 
-		// a new message starts once the previous one is full
-		if current != nil && msg != current {
+		// a new message starts once the previous one is full, progress text is dropped
+		if current != nil && msg != current && !current.Intermediate {
 			finish(current)
 			draftId++
 		}
 		current = msg
 
+		content := msg.Content
+		if msg.Intermediate {
+			content = "<tg-thinking>" + msg.Content + "</tg-thinking>"
+		}
+
 		mu.Lock()
-		lastDraft = msg.Content
+		lastDraft = content
 		lastSend = time.Now()
-		if err := t.sendRichDraft(chatId, draftId, msg.Content); err != nil {
+		if err := t.sendRichDraft(chatId, draftId, content); err != nil {
 			logger.WarnCtx(t.Robot.Ctx, "send rich draft fail", "msgID", msgId, "err", err)
 		}
 		mu.Unlock()
 	}
 
-	finish(current)
+	if current != nil && !current.Intermediate {
+		finish(current)
+	}
 }
 
 // sendRichDraft stream a partial markdown answer to a private chat

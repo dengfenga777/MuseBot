@@ -298,6 +298,8 @@ type MsgInfo struct {
 	PartContent string
 	SendLen     int
 	Finished    bool
+	// Intermediate marks text the llm wrote before calling tools, not the final answer
+	Intermediate bool
 }
 
 type ImgResponse struct {
