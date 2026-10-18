@@ -35,12 +35,14 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends wget ca-certificates xz-utils && \
     rm -rf /var/lib/apt/lists/*
 
-# Download and extract static FFmpeg binaries
-RUN wget https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz && \
+# Download and extract static FFmpeg binaries for the target architecture
+ARG TARGETARCH
+RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
+    wget https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-${ARCH}-static.tar.xz && \
     mkdir -p /tmp/ffmpeg && \
-    tar -xJf ffmpeg-release-amd64-static.tar.xz -C /tmp/ffmpeg && \
-    cp /tmp/ffmpeg/ffmpeg-*-amd64-static/ffmpeg /usr/local/bin/ && \
-    cp /tmp/ffmpeg/ffmpeg-*-amd64-static/ffprobe /usr/local/bin/ && \
+    tar -xJf ffmpeg-release-${ARCH}-static.tar.xz -C /tmp/ffmpeg && \
+    cp /tmp/ffmpeg/ffmpeg-*-${ARCH}-static/ffmpeg /usr/local/bin/ && \
+    cp /tmp/ffmpeg/ffmpeg-*-${ARCH}-static/ffprobe /usr/local/bin/ && \
     chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe && \
     rm -rf /tmp/ffmpeg
 
@@ -70,7 +72,6 @@ COPY --from=builder /app/MuseBot .
 COPY --from=builder /app/MuseBotAdmin .
 COPY --from=builder /app/conf/i18n/ ./conf/i18n/
 COPY --from=builder /app/conf/mcp/ ./conf/mcp/
-COPY --from=builder /app/conf/img/ ./conf/img/
 COPY --from=builder /app/admin/adminui/ ./conf/adminui/
 
 # Copy FFmpeg binaries
