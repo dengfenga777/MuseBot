@@ -222,8 +222,12 @@ func (t *TelegramRobot) checkValid() bool {
 
 	if t.Update.Message != nil {
 		if t.skipThisMsg() {
+			replyFrom := ""
+			if reply := t.getMessage().ReplyToMessage; reply != nil && reply.From != nil {
+				replyFrom = strconv.FormatInt(reply.From.ID, 10) + "/" + reply.From.UserName
+			}
 			logger.WarnCtx(t.Robot.Ctx, "skip this msg", "msgId", msgId, "chat", chatId,
-				"type", t.getMessage().Chat.Type, "content", t.getMsgContent())
+				"type", t.getMessage().Chat.Type, "content", t.getMsgContent(), "replyFrom", replyFrom)
 			return false
 		}
 
@@ -326,8 +330,7 @@ func (t *TelegramRobot) handleCommandAndCallback() bool {
 		return true
 	}
 
-	if t.Update.Message != nil && t.Update.Message.ReplyToMessage != nil && t.Update.Message.ReplyToMessage.From != nil &&
-		t.Update.Message.ReplyToMessage.From.UserName == t.Bot.Self.UserName {
+	if t.Update.Message != nil && t.isReplyToBot() {
 		go t.ExecuteForceReply()
 		return true
 	}
@@ -341,8 +344,7 @@ func (t *TelegramRobot) skipThisMsg() bool {
 		return false
 	}
 
-	if t.Update.Message.ReplyToMessage != nil && t.Update.Message.ReplyToMessage.From != nil &&
-		t.Update.Message.ReplyToMessage.From.UserName == t.Bot.Self.UserName {
+	if t.isReplyToBot() {
 		return false
 	}
 
@@ -408,6 +410,9 @@ func (t *TelegramRobot) sendChatMessage() {
 
 	// Remove /chat and /chat@botUserName from the message
 	content := utils.ReplaceCommand(messageText, "/chat", t.Bot.Self.UserName)
+	if quoted := t.quotedBotMessage(); quoted != "" && strings.TrimSpace(content) != "" {
+		content = fmt.Sprintf("[Replying to your earlier message: %s]\n%s", quoted, content)
+	}
 	t.Update.Message.Text = content
 	t.Prompt = content
 
@@ -1008,7 +1013,36 @@ func (t *TelegramRobot) ExecuteForceReply() {
 		t.Robot.sendMultiAgent(t.sendForceReply("task_empty_content"))
 	case i18n.GetMessage("mcp_empty_content", nil):
 		t.Robot.sendMultiAgent(t.sendForceReply("task_empty_content"))
+	default:
+		// a plain reply to one of the bot's answers continues the conversation
+		t.sendChatMessage()
 	}
+}
+
+// isReplyToBot report whether the message replies to one of the bot's own messages
+func (t *TelegramRobot) isReplyToBot() bool {
+	msg := t.getMessage()
+	if msg == nil || msg.ReplyToMessage == nil || msg.ReplyToMessage.From == nil {
+		return false
+	}
+	return msg.ReplyToMessage.From.ID == t.Bot.Self.ID
+}
+
+// quotedBotMessage return the start of the bot message being replied to, so others in a group can follow up on it
+func (t *TelegramRobot) quotedBotMessage() string {
+	if !t.isReplyToBot() {
+		return ""
+	}
+	reply := t.getMessage().ReplyToMessage
+	quoted := reply.Text
+	if quoted == "" {
+		quoted = reply.Caption
+	}
+	runes := []rune(strings.TrimSpace(quoted))
+	if len(runes) > 500 {
+		runes = append(runes[:500], []rune("...")...)
+	}
+	return string(runes)
 }
 
 func (t *TelegramRobot) GetAudioContent() []byte {
