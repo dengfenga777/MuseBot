@@ -13,38 +13,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Copy dependency files first for better caching
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 
 # Copy the rest of the application
 COPY . .
 
-# Build the Go application
-RUN go build -ldflags="-s -w" -o MuseBot main.go
-RUN go build -ldflags="-s -w" -o MuseBotAdmin admin/main.go
+# Build the Go application, reusing the module and build caches across builds (needs BuildKit)
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go build -ldflags="-s -w" -o MuseBot main.go && \
+    go build -ldflags="-s -w" -o MuseBotAdmin admin/main.go
 
-
-# ----------------------
-# FFmpeg download stage
-# ----------------------
-FROM debian:stable-slim AS ffmpeg-builder
-
-WORKDIR /tmp
-
-# Install required tools (wget + xz-utils for tar.xz extraction)
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends wget ca-certificates xz-utils && \
-    rm -rf /var/lib/apt/lists/*
-
-# Download and extract static FFmpeg binaries for the target architecture
-ARG TARGETARCH
-RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
-    wget https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-${ARCH}-static.tar.xz && \
-    mkdir -p /tmp/ffmpeg && \
-    tar -xJf ffmpeg-release-${ARCH}-static.tar.xz -C /tmp/ffmpeg && \
-    cp /tmp/ffmpeg/ffmpeg-*-${ARCH}-static/ffmpeg /usr/local/bin/ && \
-    cp /tmp/ffmpeg/ffmpeg-*-${ARCH}-static/ffprobe /usr/local/bin/ && \
-    chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe && \
-    rm -rf /tmp/ffmpeg
 
 # ----------------------
 # Runtime stage
@@ -74,9 +54,9 @@ COPY --from=builder /app/conf/i18n/ ./conf/i18n/
 COPY --from=builder /app/conf/mcp/ ./conf/mcp/
 COPY --from=builder /app/admin/adminui/ ./conf/adminui/
 
-# Copy FFmpeg binaries
-COPY --from=ffmpeg-builder /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg
-COPY --from=ffmpeg-builder /usr/local/bin/ffprobe /usr/local/bin/ffprobe
+# Copy static FFmpeg binaries (multi-arch image, no download from a single mirror)
+COPY --from=mwader/static-ffmpeg:7.1 /ffmpeg /usr/local/bin/ffmpeg
+COPY --from=mwader/static-ffmpeg:7.1 /ffprobe /usr/local/bin/ffprobe
 
 # Create non-root user for security
 RUN useradd -m appuser && \
