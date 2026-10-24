@@ -231,6 +231,9 @@ func (t *TelegramRobot) checkValid() bool {
 			return false
 		}
 
+		// the message that triggered the bot is cleaned up together with the answer
+		scheduleAutoDelete(t.Bot, int64(utils.ParseInt(chatId)), utils.ParseInt(msgId))
+
 		t.Command, t.Prompt = ParseCommand(t.getMsgContent())
 		if t.Update.Message.IsCommand() {
 			t.Command = t.Update.Message.Command()
@@ -975,6 +978,7 @@ func (t *TelegramRobot) sendMedia(mediaContent []byte, contentType, sType string
 			logger.ErrorCtx(t.Robot.Ctx, "send image fail", "req", photo, "resp", resp)
 			return err
 		}
+		t.scheduleAutoDeleteResp(resp)
 	} else {
 		video := tgbotapi.NewVideo(int64(utils.ParseInt(chatId)), tgbotapi.FileBytes{
 			Name:  "video." + utils.DetectVideoMimeType(mediaContent),
@@ -986,6 +990,7 @@ func (t *TelegramRobot) sendMedia(mediaContent []byte, contentType, sType string
 			logger.ErrorCtx(t.Robot.Ctx, "send image fail", "req", video, "resp", resp)
 			return err
 		}
+		t.scheduleAutoDeleteResp(resp)
 	}
 
 	return nil
@@ -1191,8 +1196,26 @@ func ForceReply(chatId int64, msgId int, i18MsgId string, bot *tgbotapi.BotAPI) 
 		Selective:  true,
 	}
 	msg.ReplyToMessageID = msgId
-	_, err := bot.Send(msg)
+	sendInfo, err := bot.Send(msg)
+	if err == nil {
+		scheduleAutoDelete(bot, chatId, sendInfo.MessageID)
+	}
 	return err
+}
+
+// scheduleAutoDelete delete a group message after AUTO_DELETE_SECONDS, private chats are kept.
+// Timers live in memory, so messages pending deletion are kept if the bot restarts.
+func scheduleAutoDelete(bot *tgbotapi.BotAPI, chatId int64, msgId int) {
+	delay := conf.BaseConfInfo.AutoDeleteSeconds
+	if delay <= 0 || bot == nil || chatId >= 0 || msgId == 0 {
+		return
+	}
+
+	time.AfterFunc(time.Duration(delay)*time.Second, func() {
+		if _, err := bot.Request(tgbotapi.NewDeleteMessage(chatId, msgId)); err != nil {
+			logger.Warn("auto delete message fail", "chat", chatId, "msgId", msgId, "err", err)
+		}
+	})
 }
 
 func (t *TelegramRobot) sendTextStream(messageChan *MsgChan) {
@@ -1276,6 +1299,7 @@ func (t *TelegramRobot) sendTextStream(messageChan *MsgChan) {
 					continue
 				}
 				sendMsgId = sendInfo.MessageID
+				scheduleAutoDelete(t.Bot, chatId, sendMsgId)
 			}
 			msg.MsgId = strconv.Itoa(sendMsgId)
 		} else {
@@ -1387,6 +1411,17 @@ func (t *TelegramRobot) sendTextStreamDraft(messageChan *MsgChan, chatId int64, 
 	}
 }
 
+// scheduleAutoDeleteResp schedule deleting the message returned by a raw api request
+func (t *TelegramRobot) scheduleAutoDeleteResp(resp *tgbotapi.APIResponse) {
+	if resp == nil {
+		return
+	}
+	var sendInfo tgbotapi.Message
+	if err := json.Unmarshal(resp.Result, &sendInfo); err == nil && sendInfo.Chat != nil {
+		scheduleAutoDelete(t.Bot, sendInfo.Chat.ID, sendInfo.MessageID)
+	}
+}
+
 // sendRichDraft stream a partial markdown answer to a private chat
 func (t *TelegramRobot) sendRichDraft(chatId int64, draftId int, content string) error {
 	params := tgbotapi.Params{}
@@ -1418,6 +1453,7 @@ func (t *TelegramRobot) sendRichMarkdown(chatId int64, replyToMsgId int, content
 	if err = json.Unmarshal(resp.Result, &sendInfo); err != nil {
 		return 0, err
 	}
+	scheduleAutoDelete(t.Bot, chatId, sendInfo.MessageID)
 	return sendInfo.MessageID, nil
 }
 
@@ -1435,7 +1471,7 @@ func (t *TelegramRobot) sendVoiceContent(voiceContent []byte, duration int) erro
 	chatIdStr, _, _ := t.Robot.GetChatIdAndMsgIdAndUserID()
 	chatId := int64(utils.ParseInt(chatIdStr))
 
-	_, err := t.Bot.Send(tgbotapi.NewVoice(chatId, tgbotapi.FileBytes{
+	sendInfo, err := t.Bot.Send(tgbotapi.NewVoice(chatId, tgbotapi.FileBytes{
 		Name:  "voice." + utils.DetectAudioFormat(voiceContent),
 		Bytes: voiceContent,
 	}))
@@ -1443,6 +1479,7 @@ func (t *TelegramRobot) sendVoiceContent(voiceContent []byte, duration int) erro
 		logger.WarnCtx(t.Robot.Ctx, "send voice fail", "err", err)
 		return err
 	}
+	scheduleAutoDelete(t.Bot, chatId, sendInfo.MessageID)
 
 	return nil
 }

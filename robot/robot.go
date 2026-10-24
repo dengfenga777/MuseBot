@@ -368,6 +368,7 @@ func (r *RobotInfo) SendMsg(chatId string, msgContent string, replyToMessageID s
 			logger.WarnCtx(r.Ctx, "send message fail", "err", err)
 			return ""
 		}
+		scheduleAutoDelete(telegramRobot.Bot, msg.ChatID, msgInfo.MessageID)
 		return utils.ValueToString(msgInfo.MessageID)
 	case *DiscordRobot:
 		discordRobot := r.Robot.(*DiscordRobot)

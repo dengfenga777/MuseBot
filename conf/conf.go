@@ -82,6 +82,7 @@ type BaseConf struct {
 	Powered            string `json:"powered"`
 	ShowStats          bool   `json:"show_stats"`
 	SearxngURL         string `json:"searxng_url"`
+	AutoDeleteSeconds  int    `json:"auto_delete_seconds"`
 	SendMcpRes         bool   `json:"send_mcp_res"`
 	SendMcpMediaToLLM  bool   `json:"send_mcp_media_to_llm"`
 	DefaultModel       string `json:"default_model"`
@@ -181,6 +182,7 @@ func InitConf() {
 	flag.StringVar(&BaseConfInfo.Powered, "powered", "", "powered by")
 	flag.BoolVar(&BaseConfInfo.ShowStats, "show_stats", false, "show model, latency and token usage under answers")
 	flag.StringVar(&BaseConfInfo.SearxngURL, "searxng_url", "", "searxng base url used by the builtin web_search tool")
+	flag.IntVar(&BaseConfInfo.AutoDeleteSeconds, "auto_delete_seconds", 0, "delete telegram group messages to and from the bot after this many seconds, 0 keeps them")
 	flag.StringVar(&BaseConfInfo.ImagePath, "image_path", "./conf/img/", "image path")
 
 	flag.StringVar(&BaseConfInfo.CrtFile, "crt_file", "", "public key file")
@@ -477,6 +479,10 @@ func InitConf() {
 		BaseConfInfo.SearxngURL = os.Getenv("SEARXNG_URL")
 	}
 
+	if os.Getenv("AUTO_DELETE_SECONDS") != "" {
+		BaseConfInfo.AutoDeleteSeconds, _ = strconv.Atoi(os.Getenv("AUTO_DELETE_SECONDS"))
+	}
+
 	if os.Getenv("SEND_MCP_RES") != "" {
 		BaseConfInfo.SendMcpRes = os.Getenv("SEND_MCP_RES") == "true"
 	}
@@ -613,6 +619,7 @@ func logConf(allowedUserIds, allowedGroupIds, adminUserIds string) {
 	logger.Info("CONF", "Powered", BaseConfInfo.Powered)
 	logger.Info("CONF", "ShowStats", BaseConfInfo.ShowStats)
 	logger.Info("CONF", "SearxngURL", BaseConfInfo.SearxngURL)
+	logger.Info("CONF", "AutoDeleteSeconds", BaseConfInfo.AutoDeleteSeconds)
 	logger.Info("CONF", "Character", BaseConfInfo.Character)
 	logger.Info("CONF", "ContextExpireTime", BaseConfInfo.ContextExpireTime)
 	logger.Info("CONF", "EnableAutoCompress", BaseConfInfo.EnableAutoCompress)
